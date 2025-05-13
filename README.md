@@ -4,6 +4,7 @@
 
 This Python script provides a graphical user interface (GUI) to apply various tweaks to control and manage Windows Update behavior on Windows 10 and newer operating systems. It aims to give users more granular control over updates by modifying system settings, services, scheduled tasks, and network configurations.
 
+![Windows Update Tweaker](WindowsUpdateTweaker.png)
 ## Features
 
 The tool offers the following reversible tweaks:

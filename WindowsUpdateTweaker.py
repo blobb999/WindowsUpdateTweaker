@@ -607,7 +607,7 @@ TWEAKS = [
 ]
 
 root = tk.Tk()
-root.title("🔥 Windows Update Tweaker v4.3 (Status Fixes) 🔥")
+root.title("🔥 Windows Update Tweaker v1.0 (Status Fixes) 🔥")
 root.geometry("860x750") 
 root.configure(bg="#f0f0f0")
 
@@ -615,7 +615,7 @@ font_hdr = ("Segoe UI", 16, "bold")
 font_def = ("Segoe UI", 11)
 font_bld = ("Segoe UI", 10, "bold")
 
-tk.Label(root, text="Windows Update Tweaker v4.3", font=font_hdr, bg="#f0f0f0").pack(pady=15)
+tk.Label(root, text="Windows Update Tweaker v1.0", font=font_hdr, bg="#f0f0f0").pack(pady=15)
 
 status_labels = []
 
@@ -678,7 +678,7 @@ for tweak_item in TWEAKS:
 bottom_frame = tk.Frame(root, bg="#f0f0f0")
 bottom_frame.pack(fill=tk.X, pady=15, padx=20)
 refresh_button = tk.Button(bottom_frame, text="Refresh All Statuses", font=font_bld, bg="#2196F3", fg="#fff", command=refresh_all_statuses)
-about_button = tk.Button(bottom_frame, text="About", font=font_bld, bg="#555", fg="#fff", command=lambda: messagebox.showinfo("About", "Windows Update Tweaker v4.3\nStatus Detection Fixes\nLogs to tweak_log.txt"))
+about_button = tk.Button(bottom_frame, text="About", font=font_bld, bg="#555", fg="#fff", command=lambda: messagebox.showinfo("About", "Windows Update Tweaker v1.0\nStatus Detection Fixes\nLogs to tweak_log.txt"))
 exit_button = tk.Button(bottom_frame, text="Exit", font=font_bld, bg="#777", fg="#fff", command=root.destroy)
 refresh_button.pack(side=tk.LEFT, padx=10)
 about_button.pack(side=tk.LEFT)
