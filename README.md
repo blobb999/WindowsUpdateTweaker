@@ -84,7 +84,7 @@ The tool offers the following reversible tweaks, grouped by category:
 3. Navigate to the script directory.
 4. Run:
    ```powershell
-   python WindowsUpdateTweaker2.py
+   python WindowsUpdateTweaker.py
    ```
 5. The GUI displays the current status of each tweak. Use the **Apply**, **Undo**, **Apply All**, and **Undo All** buttons to manage them.
 
