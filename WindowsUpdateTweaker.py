@@ -1159,64 +1159,48 @@ class WindowsUpdateTweakerGUI:
 
     def update_active_tweaks_count(self):
         active_count = 0
-        total_tweaks = 0
+        total_counted = 0
+        counted_groups = set()
         
-        # Create a set of all unique tweaks (accounting for groups)
-        unique_tweaks = set()
-        for name in self.tweak_ui_map.keys():
-            # Check if this tweak is part of a group
-            in_group = False
-            for key, names in self.tweak_groups.items():
-                if name in names:
-                    unique_tweaks.add(key)  # Add group key instead of individual tweak
-                    in_group = True
-                    break
-            if not in_group:
-                unique_tweaks.add(name)  # Add individual tweak
-        
-        total_tweaks = len(unique_tweaks)
-        
-        # Now count active tweaks
+        # Iterate through all tweaks in the UI map
         for name, (status_label, status_func, _, _, _) in self.tweak_ui_map.items():
             status = status_func()
-            
-            # Check if this tweak is part of a group
-            in_group = False
+            # Exclude tweaks that are not found
+            if status == "Not Found":
+                continue
+            # Determine if this tweak belongs to a group
             group_key = None
             for key, names in self.tweak_groups.items():
                 if name in names:
-                    in_group = True
                     group_key = key
                     break
-            
-            if in_group:
-                # For grouped tweaks, if any tweak in the group is active, count the group as active
-                if is_tweak_active(status, name):
-                    # Check if we've already counted this group
-                    if group_key in unique_tweaks:
+            # Count unique groups or standalone tweaks
+            if group_key:
+                if group_key not in counted_groups:
+                    counted_groups.add(group_key)
+                    total_counted += 1
+                    if is_tweak_active(status, name):
                         active_count += 1
-                        # Remove from set to avoid counting again
-                        unique_tweaks.remove(group_key)
             else:
-                # For standalone tweaks, count if active
-                if is_tweak_active(status, name) and name in unique_tweaks:
+                total_counted += 1
+                if is_tweak_active(status, name):
                     active_count += 1
-                    # Remove from set to avoid counting again
-                    unique_tweaks.remove(name)
         
+        # Update UI label
         if hasattr(self, "active_tweaks_label"):
-            self.active_tweaks_label.config(text=f"Active Tweaks: {active_count}/{total_tweaks}")
-            # Color based on percentage of active tweaks
-            if total_tweaks > 0:
-                percentage = active_count / total_tweaks
-                if percentage > 0.7:  # More than 70% active
+            self.active_tweaks_label.config(text=f"Active Tweaks: {active_count}/{total_counted}")
+            # Color based on percentage
+            if total_counted > 0:
+                percentage = active_count / total_counted
+                if percentage > 0.7:
                     self.active_tweaks_label.config(foreground=COLOR_ACTIVE)
-                elif percentage < 0.3:  # Less than 30% active
+                elif percentage < 0.3:
                     self.active_tweaks_label.config(foreground=COLOR_INACTIVE)
-                else:  # Between 30% and 70%
+                else:
                     self.active_tweaks_label.config(foreground=COLOR_NEUTRAL)
-            
-        log_message(f"Dashboard stats refreshed: Admin={is_admin_val}, ActiveTweaks={active_count}/{total_tweaks}")
+        
+        log_message(f"Dashboard stats refreshed: Admin={is_admin_val}, ActiveTweaks={active_count}/{total_counted}")
+
 
     def apply_waaSMedic_tweak(self, silent=False):
         """
@@ -1369,36 +1353,54 @@ class WindowsUpdateTweakerGUI:
             ))
 
 
-    def _execute_all_actions(self, action_type="apply"):
+    def _execute_all_actions(self, action_type="apply", silent=False):
         if not hasattr(self, "recommended_tweaks_actions") or not self.recommended_tweaks_actions:
             self._prepare_recommended_tweaks_actions()
         
         action_word = "Applying" if action_type == "apply" else "Undoing"
         confirm_message = f"This will attempt to {action_type.lower()} {len(self.recommended_tweaks_actions)} recommended tweaks. Continue?"
         
-        if messagebox.askyesno(f"Confirm {action_word} All", confirm_message, parent=self.master):
+        log_message(f"_execute_all_actions called with action_type={action_type}, silent={silent}")
+        
+        # Führe Aktionen nur aus, wenn silent=True oder der Benutzer im Dialog "Ja" klickt
+        proceed = silent
+        if not silent:
+            log_message("Showing confirmation dialog")
+            proceed = messagebox.askyesno(f"Confirm {action_word} All", confirm_message, parent=self.master)
+        else:
+            log_message("Skipping confirmation dialog due to silent mode")
+        
+        if proceed:
+            log_message(f"Proceeding with {action_word} tweaks")
             def _process_all_task():
-                self.master.config(cursor="watch")
-                self.status_bar.config(text=f"{action_word} all recommended tweaks...")
+                if not silent:
+                    self.master.config(cursor="watch")
+                    self.status_bar.config(text=f"{action_word} all recommended tweaks...")
                 log_message(f"--- {action_word} all recommended tweaks started ---")
                 
                 processed_count = 0
                 for name, apply_func, undo_func, status_func, is_task_action in self.recommended_tweaks_actions:
                     action_to_take = apply_func if action_type == "apply" else undo_func
-                    self.status_bar.config(text=f"{action_word} ({processed_count+1}/{len(self.recommended_tweaks_actions)}): {name}")
+                    if not silent:
+                        self.status_bar.config(text=f"{action_word} ({processed_count+1}/{len(self.recommended_tweaks_actions)}): {name}")
                     try:
-                        action_to_take(True)# Execute silently via positional arg
+                        action_to_take(True)  # Execute silently
                     except Exception as e:
                         log_message(f"Error during {action_word} {name}: {e}")
                     processed_count += 1
-                    time.sleep(0.05) # Small delay to allow UI to breathe and show progress
+                    time.sleep(0.05)  # Small delay to allow processing
 
-                self.master.after(0, self.refresh_all_tweak_statuses) # Refresh UI after all actions
-                self.master.after(0, lambda: self.master.config(cursor=""))
-                self.master.after(0, lambda: self.status_bar.config(text=f"All recommended tweaks {action_type} process completed. Check logs for details."))
+                if not silent:
+                    self.master.after(0, self.refresh_all_tweak_statuses)
+                    self.master.after(0, lambda: self.master.config(cursor=""))
+                    self.master.after(0, lambda: self.status_bar.config(text=f"All recommended tweaks {action_type} process completed. Check logs for details."))
                 log_message(f"--- {action_word} all recommended tweaks finished ---")
+            
+            log_message("Starting tweak application thread")
             threading.Thread(target=_process_all_task, daemon=True).start()
-
+        else:
+            log_message(f"{action_word} tweaks cancelled")
+        
     def apply_all_recommended_tweaks(self):
         self._execute_all_actions(action_type="apply")
 
@@ -1633,14 +1635,14 @@ class WindowsUpdateTweakerGUI:
         if len(sys.argv) > 1:
             if "--autorun-silent" in sys.argv:
                 log_message("Autorun silent mode detected. Applying all recommended tweaks...")
-                self.apply_all_recommended_tweaks()
-                # Exit after applying tweaks
-                self.master.after(5000, self.master.destroy)
+                self._execute_all_actions(action_type="apply", silent=True)
+                log_message("Silent mode tweaks applied. Exiting...")
+                self.master.after(1000, self.master.destroy)
             elif "--check-only" in sys.argv:
                 log_message("Check-only mode detected. Checking tweak status...")
                 self.refresh_all_tweak_statuses()
-                # Exit after checking status
-                self.master.after(5000, self.master.destroy)
+                log_message("Check-only mode completed. Exiting...")
+                self.master.after(1000, self.master.destroy)
 
     def show_about(self):
         about_text = f"""Windows Update Tweaker v{APP_VERSION}
@@ -1735,7 +1737,29 @@ Check for updates: {GITHUB_RELEASES_PAGE_URL}
 # ---------------------------
 if __name__ == "__main__":
     is_admin_val = False
-    
+    log_message(f"Command line arguments: {sys.argv}")
+
+    if "--autorun-silent" in sys.argv:
+        log_message("Autorun silent mode detected. Applying all recommended tweaks...")
+        root = tk.Tk()
+        root.withdraw()
+        app = WindowsUpdateTweakerGUI(root)
+        log_message("Calling _execute_all_actions with silent=True")
+        app._execute_all_actions(action_type="apply", silent=True)
+        log_message("Silent mode tweaks applied. Exiting...")
+        root.destroy()
+        sys.exit(0)
+    elif "--check-only" in sys.argv:
+        log_message("Check-only mode detected. Checking tweak status...")
+        root = tk.Tk()
+        root.withdraw()
+        app = WindowsUpdateTweakerGUI(root)
+        app.refresh_all_tweak_statuses()
+        log_message("Check-only mode completed. Exiting...")
+        root.destroy()
+        sys.exit(0)
+
+    log_message("Starting GUI mode")
     root = tk.Tk()
     app = WindowsUpdateTweakerGUI(root)
     root.mainloop()
