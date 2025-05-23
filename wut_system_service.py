@@ -9,6 +9,8 @@ für den Windows Update Tweaker durchzuführen.
 
 Dieser Dienst ermöglicht die Verwaltung von geschützten geplanten Aufgaben und anderen
 Systemkomponenten, die erhöhte Berechtigungen erfordern.
+
+Diese Version wurde speziell für die Kompatibilität mit PyInstaller optimiert.
 """
 
 import os
@@ -37,13 +39,35 @@ LOG_FILE = os.path.join(os.environ.get('PROGRAMDATA', r'C:\ProgramData'),
                         "WindowsUpdateTweaker", "service_log.txt")
 
 # Logging-Konfiguration
-os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
-logging.basicConfig(
-    filename=LOG_FILE,
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
+try:
+    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
+    logging.basicConfig(
+        filename=LOG_FILE,
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    # Füge einen Handler für die Konsole hinzu (nützlich für Debugging)
+    console = logging.StreamHandler()
+    console.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    console.setFormatter(formatter)
+    logging.getLogger('').addHandler(console)
+except Exception as e:
+    # Fallback, wenn Logging-Konfiguration fehlschlägt
+    print(f"Fehler bei der Logging-Konfiguration: {e}")
+
+def log_exception(e, context=""):
+    """Protokolliert eine Ausnahme mit Traceback"""
+    try:
+        if context:
+            logging.error(f"Exception in {context}: {e}")
+        else:
+            logging.error(f"Exception: {e}")
+        logging.error(traceback.format_exc())
+    except:
+        print(f"Exception: {e}")
+        print(traceback.format_exc())
 
 class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
     _svc_name_ = SERVICE_NAME
@@ -51,31 +75,44 @@ class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
     _svc_description_ = SERVICE_DESCRIPTION
 
     def __init__(self, args):
-        win32serviceutil.ServiceFramework.__init__(self, args)
-        self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
-        self.is_running = False
-        socket.setdefaulttimeout(60)
-        self.pipe_thread = None
+        try:
+            win32serviceutil.ServiceFramework.__init__(self, args)
+            self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
+            self.is_running = False
+            socket.setdefaulttimeout(60)
+            self.pipe_thread = None
+            logging.info("Service initialized")
+        except Exception as e:
+            log_exception(e, "service initialization")
 
     def SvcStop(self):
-        self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
-        win32event.SetEvent(self.hWaitStop)
-        self.is_running = False
-        logging.info("Service stopping...")
+        try:
+            logging.info("Service stop requested")
+            self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+            win32event.SetEvent(self.hWaitStop)
+            self.is_running = False
+        except Exception as e:
+            log_exception(e, "SvcStop")
 
     def SvcDoRun(self):
-        servicemanager.LogMsg(
-            servicemanager.EVENTLOG_INFORMATION_TYPE,
-            servicemanager.PYS_SERVICE_STARTED,
-            (self._svc_name_, '')
-        )
-        self.is_running = True
-        logging.info("Service starting...")
-        self.main()
+        try:
+            logging.info("Service starting...")
+            servicemanager.LogMsg(
+                servicemanager.EVENTLOG_INFORMATION_TYPE,
+                servicemanager.PYS_SERVICE_STARTED,
+                (self._svc_name_, '')
+            )
+            self.is_running = True
+            self.main()
+        except Exception as e:
+            log_exception(e, "SvcDoRun")
+            self.SvcStop()
 
     def main(self):
         """Hauptfunktion des Dienstes"""
         try:
+            logging.info("Service main function started")
+            
             # Starte Named Pipe Server in einem separaten Thread
             self.pipe_thread = threading.Thread(target=self.run_pipe_server)
             self.pipe_thread.daemon = True
@@ -86,16 +123,17 @@ class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
                 # Warte auf Stop-Signal oder führe periodische Aufgaben aus
                 rc = win32event.WaitForSingleObject(self.hWaitStop, 5000)
                 if rc == win32event.WAIT_OBJECT_0:
+                    logging.info("Stop signal received")
                     break
             
             # Warte auf Beendigung des Pipe-Threads
             if self.pipe_thread and self.pipe_thread.is_alive():
+                logging.info("Waiting for pipe thread to terminate...")
                 self.pipe_thread.join(3.0)  # Warte max. 3 Sekunden
                 
-            logging.info("Service stopped.")
+            logging.info("Service stopped")
         except Exception as e:
-            logging.error(f"Service error: {e}")
-            logging.error(traceback.format_exc())
+            log_exception(e, "main function")
             self.SvcStop()
 
     def run_pipe_server(self):
@@ -103,6 +141,7 @@ class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
         logging.info(f"Starting pipe server on {PIPE_NAME}")
         
         while self.is_running:
+            pipe_handle = None
             try:
                 # Erstelle Named Pipe
                 pipe_handle = win32pipe.CreateNamedPipe(
@@ -119,7 +158,7 @@ class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
                 # Warte auf Client-Verbindung
                 logging.info("Waiting for client connection...")
                 win32pipe.ConnectNamedPipe(pipe_handle, None)
-                logging.info("Client connected.")
+                logging.info("Client connected")
                 
                 # Verarbeite Client-Anfrage in separatem Thread
                 client_thread = threading.Thread(
@@ -129,9 +168,18 @@ class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
                 client_thread.daemon = True
                 client_thread.start()
                 
+                # Übergebe die Verantwortung für das Pipe-Handle an den Client-Thread
+                pipe_handle = None
+                
             except Exception as e:
-                logging.error(f"Pipe server error: {e}")
-                logging.error(traceback.format_exc())
+                log_exception(e, "pipe server")
+                
+                # Schließe Pipe-Handle, falls vorhanden
+                if pipe_handle:
+                    try:
+                        win32file.CloseHandle(pipe_handle)
+                    except:
+                        pass
                 
                 # Kurze Pause vor dem nächsten Versuch
                 time.sleep(1)
@@ -146,7 +194,7 @@ class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
             # Lese Anfrage vom Client
             data = self.read_from_pipe(pipe_handle)
             if not data:
-                logging.warning("Received empty request from client.")
+                logging.warning("Received empty request from client")
                 self.send_response(pipe_handle, {"status": "error", "message": "Empty request"})
                 return
             
@@ -161,8 +209,7 @@ class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
             self.send_response(pipe_handle, response)
             
         except Exception as e:
-            logging.error(f"Error handling client request: {e}")
-            logging.error(traceback.format_exc())
+            log_exception(e, "client connection handler")
             try:
                 self.send_response(pipe_handle, {
                     "status": "error",
@@ -175,8 +222,8 @@ class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
             try:
                 win32pipe.DisconnectNamedPipe(pipe_handle)
                 win32file.CloseHandle(pipe_handle)
-            except:
-                pass
+            except Exception as e:
+                log_exception(e, "closing pipe connection")
 
     def read_from_pipe(self, pipe_handle):
         """Liest Daten aus der Named Pipe"""
@@ -185,7 +232,7 @@ class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
             return data.decode('utf-8')
         except pywintypes.error as e:
             if e.winerror == 109:  # ERROR_BROKEN_PIPE
-                logging.warning("Client disconnected.")
+                logging.warning("Client disconnected")
                 return None
             raise
 
@@ -196,7 +243,7 @@ class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
             win32file.WriteFile(pipe_handle, response_data)
             logging.info(f"Sent response: {response}")
         except Exception as e:
-            logging.error(f"Error sending response: {e}")
+            log_exception(e, "sending response")
             raise
 
     def process_request(self, request):
@@ -224,8 +271,7 @@ class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
             else:
                 return {"status": "error", "message": f"Unknown operation: {operation}"}
         except Exception as e:
-            logging.error(f"Error processing request: {e}")
-            logging.error(traceback.format_exc())
+            log_exception(e, "processing request")
             return {"status": "error", "message": str(e)}
 
     def disable_scheduled_task(self, task_name):
@@ -323,7 +369,7 @@ class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
                         }
                     }
             except Exception as e:
-                logging.error(f"Error parsing task status for {task_name}: {e}")
+                log_exception(e, f"parsing task status for {task_name}")
                 return {
                     "status": "error",
                     "message": f"Error parsing task status: {e}",
@@ -446,7 +492,7 @@ class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
             
             return result
         except Exception as e:
-            logging.error(f"Exception executing command {cmd}: {e}")
+            log_exception(e, f"executing command {cmd}")
             return {
                 "stdout": "",
                 "stderr": str(e),
@@ -454,10 +500,23 @@ class WindowsUpdateTweakerService(win32serviceutil.ServiceFramework):
             }
 
 
+def main():
+    """Haupteinstiegspunkt für den Dienst"""
+    try:
+        logging.info(f"Service script started with args: {sys.argv}")
+        
+        if len(sys.argv) == 1:
+            logging.info("Starting service control dispatcher")
+            servicemanager.Initialize()
+            servicemanager.PrepareToHostSingle(WindowsUpdateTweakerService)
+            servicemanager.StartServiceCtrlDispatcher()
+        else:
+            logging.info(f"Handling command line: {sys.argv}")
+            win32serviceutil.HandleCommandLine(WindowsUpdateTweakerService)
+    except Exception as e:
+        log_exception(e, "main entry point")
+        sys.exit(1)
+
+
 if __name__ == '__main__':
-    if len(sys.argv) == 1:
-        servicemanager.Initialize()
-        servicemanager.PrepareToHostSingle(WindowsUpdateTweakerService)
-        servicemanager.StartServiceCtrlDispatcher()
-    else:
-        win32serviceutil.HandleCommandLine(WindowsUpdateTweakerService)
+    main()

@@ -45,6 +45,7 @@ log_message("--- Script started ---")
 
 IS_WINDOWS = os.name == "nt"
 system_client = SystemServiceClient(log_message)
+system_client.ensure_service_running()
 
 
 if not IS_WINDOWS:

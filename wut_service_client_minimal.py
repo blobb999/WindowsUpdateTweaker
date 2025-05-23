@@ -1,3 +1,13 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+"""
+Windows Update Tweaker - System Service Client
+--------------------------------------
+Client für die Kommunikation mit dem Windows Update Tweaker System Service.
+Diese Version wurde speziell für die Kompatibilität mit PyInstaller optimiert.
+"""
+
 import os
 import sys
 import subprocess
@@ -9,11 +19,13 @@ import pywintypes
 import time
 import logging
 import threading
+import shutil
 
 # Konfiguration
 PIPE_NAME = r"\\.\pipe\WindowsUpdateTweakerPipe"
 SERVICE_NAME = "WindowsUpdateTweakerService"
-SERVICE_EXECUTABLE = "wut_system_service.py"
+SERVICE_EXECUTABLE = "wut_system_service.exe"  # Kompilierte EXE-Datei
+SERVICE_SCRIPT = "wut_system_service_fixed.py"  # Python-Skript für Entwicklung
 
 class SystemServiceClient:
     """Client für die Kommunikation mit dem Windows Update Tweaker System Service"""
@@ -56,7 +68,7 @@ class SystemServiceClient:
         if not self._check_service_status():
             if not self.service_installed:
                 self._install_service()
-            if not self.service_running:
+            if not self.service_running and self.service_installed:
                 self._start_service()
             # Erneut prüfen
             return self._check_service_status()
@@ -66,26 +78,128 @@ class SystemServiceClient:
         """Installiert den Dienst"""
         self._log("Installing service...")
         
-        # Bestimme den Pfad zur Dienstdatei
-        script_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
-        service_path = os.path.join(script_dir, SERVICE_EXECUTABLE)
+        # Finde den Pfad zur Service-Datei (EXE oder PY)
+        service_path = self._find_service_file()
         
-        if not os.path.exists(service_path):
-            self._log(f"Service executable not found at {service_path}")
+        if not service_path:
+            self._log("Service file not found")
             return False
         
-        # Installiere den Dienst
-        python_exe = sys.executable
-        cmd = f'"{python_exe}" "{service_path}" install'
+        self._log(f"Found service file at: {service_path}")
+        
+        # Bestimme, ob es sich um eine EXE oder PY-Datei handelt
+        is_exe = service_path.lower().endswith('.exe')
+        
+        if is_exe:
+            # Installiere den Dienst direkt mit sc create für EXE
+            binary_path = f'"{service_path}"'
+            cmd = f'sc create "{SERVICE_NAME}" binPath= {binary_path} DisplayName= "{SERVICE_NAME}" start= auto'
+        else:
+            # Für Python-Skript, verwende Python-Interpreter
+            python_exe = sys.executable
+            binary_path = f'"{python_exe}" "{service_path}"'
+            cmd = f'sc create "{SERVICE_NAME}" binPath= {binary_path} DisplayName= "{SERVICE_NAME}" start= auto'
+        
+        self._log(f"Installing service with command: {cmd}")
         result = self._run_command(cmd)
         
         if result["returncode"] == 0:
-            self._log("Service installed successfully")
+            self._log("Service installed successfully via sc create")
+            
+            # Setze Dienstbeschreibung
+            desc_cmd = f'sc description "{SERVICE_NAME}" "Führt privilegierte Operationen für den Windows Update Tweaker aus"'
+            self._run_command(desc_cmd)
+            
             self.service_installed = True
             return True
         else:
             self._log(f"Failed to install service: {result['stderr']}")
+            
+            # Wenn der Dienst bereits existiert, versuche ihn zu aktualisieren
+            if "5" in result["stderr"] or "1073" in result["stderr"]:
+                self._log("Service might already exist, trying to update binary path")
+                update_cmd = f'sc config "{SERVICE_NAME}" binPath= {binary_path}'
+                update_result = self._run_command(update_cmd)
+                
+                if update_result["returncode"] == 0:
+                    self._log("Service binary path updated successfully")
+                    self.service_installed = True
+                    return True
+            
             return False
+    
+    def _find_service_file(self):
+        """Findet den Pfad zur Service-Datei (EXE oder PY)"""
+        # Prüfe, ob wir in einer PyInstaller-EXE laufen
+        is_frozen = getattr(sys, 'frozen', False)
+        
+        # Liste der möglichen Pfade für die EXE
+        possible_exe_paths = []
+        
+        # Liste der möglichen Pfade für das Python-Skript
+        possible_py_paths = []
+        
+        # Hauptverzeichnis der Anwendung
+        app_dir = os.path.dirname(sys.executable if is_frozen else os.path.abspath(sys.argv[0]))
+        
+        # Füge EXE-Pfade hinzu
+        possible_exe_paths.append(os.path.join(app_dir, SERVICE_EXECUTABLE))
+        possible_exe_paths.append(os.path.join(app_dir, "service", SERVICE_EXECUTABLE))
+        possible_exe_paths.append(os.path.join(app_dir, "bin", SERVICE_EXECUTABLE))
+        
+        # ProgramData-Verzeichnis
+        prog_data = os.environ.get('PROGRAMDATA', r'C:\ProgramData')
+        possible_exe_paths.append(os.path.join(prog_data, "WindowsUpdateTweaker", SERVICE_EXECUTABLE))
+        
+        # PyInstaller-Extraktionsverzeichnis
+        if is_frozen and hasattr(sys, '_MEIPASS'):
+            possible_exe_paths.append(os.path.join(sys._MEIPASS, SERVICE_EXECUTABLE))
+        
+        # Füge Python-Skript-Pfade hinzu
+        possible_py_paths.append(os.path.join(app_dir, SERVICE_SCRIPT))
+        possible_py_paths.append(os.path.join(app_dir, "service", SERVICE_SCRIPT))
+        possible_py_paths.append(os.path.join(prog_data, "WindowsUpdateTweaker", SERVICE_SCRIPT))
+        
+        # Prüfe zuerst auf EXE-Dateien (bevorzugt)
+        for path in possible_exe_paths:
+            if os.path.exists(path):
+                return path
+        
+        # Wenn keine EXE gefunden wurde, prüfe auf Python-Skripte
+        for path in possible_py_paths:
+            if os.path.exists(path):
+                return path
+        
+        # Wenn die EXE nicht gefunden wurde, versuche die Service-Datei aus den Ressourcen zu extrahieren
+        if is_frozen and hasattr(sys, '_MEIPASS'):
+            try:
+                # Erstelle Zielverzeichnis
+                target_dir = os.path.join(prog_data, "WindowsUpdateTweaker")
+                os.makedirs(target_dir, exist_ok=True)
+                
+                # Versuche zuerst, die EXE zu extrahieren
+                resource_exe_path = os.path.join(sys._MEIPASS, SERVICE_EXECUTABLE)
+                target_exe_path = os.path.join(target_dir, SERVICE_EXECUTABLE)
+                
+                if os.path.exists(resource_exe_path):
+                    # Kopiere die Service-EXE
+                    shutil.copy2(resource_exe_path, target_exe_path)
+                    self._log(f"Extracted service executable to: {target_exe_path}")
+                    return target_exe_path
+                
+                # Wenn keine EXE gefunden wurde, versuche das Python-Skript
+                resource_py_path = os.path.join(sys._MEIPASS, SERVICE_SCRIPT)
+                target_py_path = os.path.join(target_dir, SERVICE_SCRIPT)
+                
+                if os.path.exists(resource_py_path):
+                    # Kopiere das Service-Skript
+                    shutil.copy2(resource_py_path, target_py_path)
+                    self._log(f"Extracted service script to: {target_py_path}")
+                    return target_py_path
+            except Exception as e:
+                self._log(f"Error extracting service file: {e}")
+        
+        return None
     
     def _start_service(self):
         """Startet den Dienst"""
