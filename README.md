@@ -105,6 +105,11 @@ The tool offers the following reversible tweaks, grouped by category:
 - **Mutual Exclusion**: ACL and rename tweaks for `wuauclt.exe` cannot be active simultaneously.
 - **Firewall IPs**: Based on DNS at rule creation; may become outdated.
 
+## Known Issues
+
+- **Windows Defender Detection**: Windows may flag this tool as high risk and remove it automatically.
+- **Create Autostart Task**: Unpacking errors may occur after a system restart when creating the autostart task.
+
 ## Logging
 All operations and their outputs/errors are logged to `tweak_log.txt` in the script directory.
 
